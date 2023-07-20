@@ -1,0 +1,139 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Stack for a sample step function
+
+Parameters:
+  EventBusARN:
+    Type: String
+    Description: Enter the Event Bus ARN for creating rule to trigger the step function
+  LambdaStackName:
+    Type: String
+    Description: Enter the lambda stack name to import the lambda function ARNs
+
+Resources:
+  EventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: TestEventRule
+      Description: Rule to trigger the step function
+      EventBusName: !Ref EventBusARN
+      EventPattern:
+        source:
+          - prefix: ""
+      State: ENABLED
+      Targets:
+        - Arn:
+            Ref: StateMachine
+          Id: Target0
+          InputTransformer:
+            InputPathsMap:
+              f1: $
+            InputTemplate: '{"event":<f1>}'
+          RoleArn:
+            Fn::GetAtt:
+              - StatemachineRole
+              - Arn
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StateMachineRole
+      AssumeRolePolicyDoument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: InvokeStepFunction
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'states:StartExecution'
+                Resource: !Ref StateMachine
+  StateExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StateExecutionRole
+      AssumeRolePolicyDoument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.${AWS::Region}.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: InvokeStepFunction
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resources:
+                  - Fn::ImportValue:
+                      !Sub "${LambdaStackName}-lambda1"  
+                  - Fn::ImportValue:
+                      !Sub "${LambdaStackName}-lambda2"  
+  StateMachine:
+    Type: 'AWS::StepFunctions::StateMachine'
+    Properties:
+      StateMachineName: TestStateMachine
+      StateMachineType: STANDARD
+      DefinitionString:
+        !Sub
+          -|-
+           {
+             "States": {
+               "State1": {
+                 "Resource": "${Lambda1}",
+                 "Type": "Task",
+                 "Parameters": {
+                   "event.$": "$.event",
+                   "item": "user"
+                 },
+                 "Retry": [
+                  {
+                    "BackOffRate": 5,
+                    "IntervalSeconds": 1,
+                    "ErrorEquals": [
+                      "States.ALL"
+                    ],
+                    "MaxAttempts": 4
+                  }
+                 ],
+                 "Next": "State2"
+               },
+               "State2": {
+                 "Resource": "${Lambda2}",
+                 "Type": "Task",
+                 "Parameters": {
+                   "event.$": "$.event",
+                   "item": "group"
+                 },
+                 "Retry": [
+                  {
+                    "BackOffRate": 5,
+                    "IntervalSeconds": 1,
+                    "ErrorEquals": [
+                      "States.ALL"
+                    ],
+                    "MaxAttempts": 4
+                  }
+                 ],
+                 "Next": "State2"
+               }
+             }
+           }
+          - Lambda1:
+              Fn::ImportValue:
+                !Sub "${LambdaStackName}-lambda1"    
+            Lambda2:
+              Fn::ImportValue:
+                !Sub "${LambdaStackName}-lambda2"  
+      RoleArn: !GetAtt
+        - StateExecutionRole
+        - Arn
